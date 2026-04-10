@@ -1,0 +1,19 @@
+# ============================================
+# render.yaml — Render Deployment Configuration
+# ============================================
+# This file tells Render how to build and run your app
+# Docs: https://render.com/docs/blueprint-spec
+# ============================================
+
+services:
+  - type: web
+    name: receipt-ocr-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: PYTHONUNBUFFERED
+        value: 1
+    healthCheckPath: /

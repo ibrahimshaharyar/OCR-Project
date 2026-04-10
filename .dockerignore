@@ -1,0 +1,55 @@
+# ============================================
+# .dockerignore — Files excluded from Docker build context
+# ============================================
+# Keeps the Docker image small and build fast
+
+# Virtual environment (not needed — pip installs from requirements.txt)
+venv/
+.venv/
+env/
+
+# Git
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Output files (generated at runtime)
+outputs/*.json
+outputs/*.csv
+outputs/*.xlsx
+
+# Temporary uploads (generated at runtime)
+temp_uploads/
+
+# Documentation (not needed in container)
+README.md
+
+# Docker files (prevent recursive copy)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Coverage / test artifacts
+htmlcov/
+.coverage
+
+# Environment files
+.env
+.env.local
