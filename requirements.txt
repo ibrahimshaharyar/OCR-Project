@@ -25,3 +25,6 @@ python-multipart==0.0.9
 
 # Testing
 pytest==8.2.2
+
+# Excel file support (.xlsx export)
+openpyxl==3.1.3

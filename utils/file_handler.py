@@ -118,10 +118,10 @@ def save_to_csv(data: dict, filename: str) -> str:
 
 def save_results(data: dict, filename: str) -> dict:
     """
-    Save extraction results to both JSON and CSV formats.
+    Save extraction results to JSON, CSV, and Excel formats.
 
-    This is a convenience function that calls both save_to_json()
-    and save_to_csv() with the same data and filename.
+    This is a convenience function that calls save_to_json(),
+    save_to_csv(), and save_to_excel() with the same data and filename.
 
     Args:
         data (dict): The extraction result dictionary containing
@@ -130,18 +130,62 @@ def save_results(data: dict, filename: str) -> dict:
                         (e.g., "receipt_001").
 
     Returns:
-        dict: A dictionary with the paths to both saved files:
-              {"json": "/path/to/file.json", "csv": "/path/to/file.csv"}
+        dict: A dictionary with the paths to all saved files:
+              {"json": "...", "csv": "...", "excel": "..."}
 
     Example:
         >>> result = {"vendor": "WALMART", "date": "01/15/2024", "total": "45.99"}
         >>> paths = save_results(result, "receipt_001")
-        >>> print(paths)
-        {"json": "outputs/receipt_001.json", "csv": "outputs/receipt_001.csv"}
     """
 
-    # Save in both formats
+    # Save in all formats
     json_path = save_to_json(data, filename)
     csv_path = save_to_csv(data, filename)
+    excel_path = save_to_excel(data, filename)
 
-    return {"json": json_path, "csv": csv_path}
+    return {"json": json_path, "csv": csv_path, "excel": excel_path}
+
+
+def save_to_excel(data: dict, filename: str) -> str:
+    """
+    Save extraction results as an Excel (.xlsx) file in the outputs/ directory.
+
+    Creates a single-row Excel spreadsheet with column headers matching
+    the dictionary keys. Uses openpyxl as the engine for .xlsx support.
+
+    Args:
+        data (dict): The extraction result dictionary containing
+                     keys like "vendor", "date", and "total".
+        filename (str): Base filename without extension
+                        (e.g., "receipt_001").
+
+    Returns:
+        str: The full path to the saved Excel file.
+
+    Raises:
+        TypeError: If data is not a dictionary.
+        ValueError: If filename is empty.
+    """
+
+    # Validate inputs
+    if not isinstance(data, dict):
+        raise TypeError(f"Expected a dictionary, got {type(data).__name__}.")
+    if not filename or not filename.strip():
+        raise ValueError("Filename cannot be empty.")
+
+    # Ensure the output directory exists
+    _ensure_output_dir()
+
+    # Build the full file path
+    filepath = os.path.join(OUTPUT_DIR, f"{filename}.xlsx")
+
+    # Create a single-row DataFrame from the dictionary
+    df = pd.DataFrame([data])
+
+    # Write to Excel without the pandas index column
+    # engine='openpyxl' is required for .xlsx format
+    df.to_excel(filepath, index=False, engine="openpyxl")
+
+    print(f"✅ Excel saved: {filepath}")
+    return filepath
+

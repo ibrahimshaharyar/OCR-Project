@@ -73,3 +73,86 @@ def extract_text(image: np.ndarray) -> str:
 
     # Strip leading/trailing whitespace and return
     return raw_text.strip()
+
+
+def extract_text_with_confidence(image: np.ndarray) -> dict:
+    """
+    Run Tesseract OCR on a preprocessed image and return the extracted
+    text along with word-level confidence scores.
+
+    This function uses pytesseract.image_to_data() which provides
+    detailed information about each recognized word, including its
+    confidence score (0-100).
+
+    Args:
+        image (np.ndarray): A preprocessed image as a NumPy array.
+
+    Returns:
+        dict: A dictionary containing:
+            - "raw_text" (str): The full extracted text string
+            - "words" (list[dict]): List of word objects, each with:
+                - "text" (str): The recognized word
+                - "confidence" (float): Confidence score (0-100)
+            - "average_confidence" (float): Average confidence across
+              all recognized words (0-100)
+
+    Raises:
+        TypeError: If the input is not a valid NumPy array.
+    """
+
+    # Validate input type
+    if not isinstance(image, np.ndarray):
+        raise TypeError(
+            f"Expected a NumPy array, got {type(image).__name__}."
+        )
+
+    # Convert NumPy array to PIL Image
+    pil_image = Image.fromarray(image)
+
+    # Configure Tesseract
+    custom_config = r"--psm 6"
+
+    # Get detailed OCR data including confidence scores
+    # output_type=dict returns a dictionary with lists for each field
+    try:
+        ocr_data = pytesseract.image_to_data(
+            pil_image,
+            config=custom_config,
+            output_type=pytesseract.Output.DICT
+        )
+    except pytesseract.TesseractNotFoundError:
+        raise pytesseract.TesseractNotFoundError(
+            "Tesseract OCR engine is not installed or not found in PATH."
+        )
+
+    # Build list of words with their confidence scores
+    # Filter out empty text entries (Tesseract returns empty strings
+    # for block/paragraph/line boundaries)
+    words = []
+    for i in range(len(ocr_data["text"])):
+        word_text = ocr_data["text"][i].strip()
+        confidence = int(ocr_data["conf"][i])
+
+        # Skip empty entries and low-confidence noise (-1 means invalid)
+        if word_text and confidence >= 0:
+            words.append({
+                "text": word_text,
+                "confidence": confidence,
+            })
+
+    # Calculate average confidence across all valid words
+    if words:
+        avg_confidence = round(
+            sum(w["confidence"] for w in words) / len(words), 1
+        )
+    else:
+        avg_confidence = 0.0
+
+    # Also get the full raw text via image_to_string
+    raw_text = extract_text(image)
+
+    return {
+        "raw_text": raw_text,
+        "words": words,
+        "average_confidence": avg_confidence,
+    }
