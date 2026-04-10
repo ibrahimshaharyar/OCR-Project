@@ -64,7 +64,7 @@ def extract_text(image: np.ndarray) -> str:
     try:
         raw_text = pytesseract.image_to_string(pil_image, config=custom_config)
     except pytesseract.TesseractNotFoundError:
-        raise pytesseract.TesseractNotFoundError(
+        raise RuntimeError(
             "Tesseract OCR engine is not installed or not found in PATH. "
             "Install it via: brew install tesseract (Mac), "
             "sudo apt install tesseract-ocr (Linux), "
@@ -121,8 +121,11 @@ def extract_text_with_confidence(image: np.ndarray) -> dict:
             output_type=pytesseract.Output.DICT
         )
     except pytesseract.TesseractNotFoundError:
-        raise pytesseract.TesseractNotFoundError(
-            "Tesseract OCR engine is not installed or not found in PATH."
+        raise RuntimeError(
+            "Tesseract OCR engine is not installed or not found in PATH. "
+            "Install it via: brew install tesseract (Mac), "
+            "sudo apt install tesseract-ocr (Linux), "
+            "or download from https://github.com/UB-Mannheim/tesseract/wiki (Windows)."
         )
 
     # Build list of words with their confidence scores
