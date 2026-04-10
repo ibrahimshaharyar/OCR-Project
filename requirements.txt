@@ -1,0 +1,27 @@
+# ============================================
+# OCR Receipt Extraction Tool — Dependencies
+# Versions pinned for Render deployment stability
+# ============================================
+
+# OCR engine Python wrapper
+pytesseract==0.3.10
+
+# Image processing (headless for server/Docker environments)
+opencv-python-headless==4.10.0.84
+Pillow==10.3.0
+
+# NumPy — pinned for cv2 compatibility with Python 3.9
+numpy==1.26.4
+
+# Data handling and CSV export
+pandas==2.2.2
+
+# Web API framework
+fastapi==0.111.0
+uvicorn==0.30.1
+
+# Required for FastAPI file uploads
+python-multipart==0.0.9
+
+# Testing
+pytest==8.2.2

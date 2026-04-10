@@ -1,0 +1,49 @@
+# ============================================
+# OCR Receipt Extraction Tool — .gitignore
+# ============================================
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Output files (keep directory, ignore contents)
+outputs/*
+!outputs/.gitkeep
+
+# Temporary upload files
+temp_uploads/
+
+# Pytest cache
+.pytest_cache/
+
+# Coverage reports
+htmlcov/
+.coverage
