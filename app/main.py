@@ -24,7 +24,8 @@ import shutil
 import json
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 # Add the project root to the Python path so imports work
@@ -50,6 +51,15 @@ app = FastAPI(
     ),
     version="1.0.0",
 )
+
+# ================================================================
+# Serve Frontend Static Files (CSS, JS)
+# ================================================================
+FRONTEND_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "frontend"
+)
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # ================================================================
 # CORS Middleware — allows the frontend to call this API
@@ -112,10 +122,20 @@ def _save_upload_temp(upload_file: UploadFile) -> str:
 # API Endpoints
 # ================================================================
 
-@app.get("/", tags=["Health"])
+@app.get("/", tags=["Frontend"], response_class=HTMLResponse)
 async def root():
     """
-    Health check endpoint. Returns a welcome message confirming
+    Serve the frontend HTML page.
+    """
+    index_path = os.path.join(FRONTEND_DIR, "index.html")
+    with open(index_path, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+@app.get("/api/health", tags=["Health"])
+async def health_check():
+    """
+    Health check endpoint. Returns a JSON status confirming
     the API is running.
     """
     return {

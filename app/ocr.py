@@ -1,16 +1,16 @@
 """
-ocr.py — Tesseract OCR Wrapper Module
+ocr.py — Tesseract OCR Wrapper Module (Enhanced)
 
-This module provides a simple wrapper around pytesseract to convert
-preprocessed images (NumPy arrays) into raw text strings.
-
-It handles the conversion from OpenCV/NumPy format to PIL Image format
-(required by pytesseract) and applies OCR configuration optimized
-for receipt text extraction.
+This module provides an optimized wrapper around pytesseract with:
+    - Best engine mode (LSTM neural net via --oem 3)
+    - Multi-pass OCR: tries multiple page segmentation modes (PSM)
+      and picks the result with the highest average confidence
+    - Word-level confidence scoring for frontend highlighting
 
 Usage:
-    from app.ocr import extract_text
+    from app.ocr import extract_text, extract_text_with_confidence
     raw_text = extract_text(preprocessed_image_array)
+    detailed = extract_text_with_confidence(preprocessed_image_array)
 """
 
 import pytesseract
@@ -18,51 +18,44 @@ from PIL import Image
 import numpy as np
 
 
-def extract_text(image: np.ndarray) -> str:
-    """
-    Run Tesseract OCR on a preprocessed image and return the extracted
-    raw text string.
+# ============================================
+# Tesseract Configuration
+# ============================================
+# --oem 3: Use the LSTM neural net OCR engine (best accuracy)
+# PSM modes tried in multi-pass:
+#   --psm 6: Assume a single uniform block of text
+#   --psm 4: Assume a single column of text
+#   --psm 3: Fully automatic page segmentation
+TESSERACT_OEM = 3
+PSM_MODES = [6, 4, 3]
 
-    This function converts a NumPy image array (from OpenCV preprocessing)
-    into a PIL Image, then passes it to Tesseract OCR for text recognition.
+
+def _build_config(psm: int = 6) -> str:
+    """
+    Build a Tesseract config string with optimal settings.
 
     Args:
-        image (np.ndarray): A preprocessed image as a NumPy array.
-                            Typically a grayscale or binary (black & white)
-                            image from the preprocessor module.
+        psm (int): Page segmentation mode.
 
     Returns:
-        str: The raw text string extracted from the image by Tesseract.
-             Returns an empty string if no text could be extracted.
-
-    Raises:
-        TypeError: If the input is not a valid NumPy array.
-        pytesseract.TesseractNotFoundError: If Tesseract is not installed
-            or not found in the system PATH.
+        str: Tesseract config string.
     """
+    return f"--oem {TESSERACT_OEM} --psm {psm}"
 
-    # Validate input type
-    if not isinstance(image, np.ndarray):
-        raise TypeError(
-            f"Expected a NumPy array, got {type(image).__name__}. "
-            "Please pass a preprocessed image from the preprocessor module."
-        )
 
-    # Convert the NumPy array to a PIL Image
-    # pytesseract works best with PIL Image objects
-    pil_image = Image.fromarray(image)
+def _run_tesseract_safe(pil_image: Image.Image, config: str) -> str:
+    """
+    Run pytesseract.image_to_string with error handling.
 
-    # Configure Tesseract for optimal receipt text extraction
-    # --psm 6: Assume a single uniform block of text
-    #   This works well for receipts which are typically a vertical
-    #   block of text. Other useful modes:
-    #   --psm 3: Fully automatic page segmentation (default)
-    #   --psm 4: Assume a single column of text
-    custom_config = r"--psm 6"
+    Args:
+        pil_image (PIL.Image): Input image.
+        config (str): Tesseract config string.
 
-    # Run Tesseract OCR on the PIL image
+    Returns:
+        str: Extracted text, or empty string on failure.
+    """
     try:
-        raw_text = pytesseract.image_to_string(pil_image, config=custom_config)
+        return pytesseract.image_to_string(pil_image, config=config).strip()
     except pytesseract.TesseractNotFoundError:
         raise RuntimeError(
             "Tesseract OCR engine is not installed or not found in PATH. "
@@ -70,54 +63,25 @@ def extract_text(image: np.ndarray) -> str:
             "sudo apt install tesseract-ocr (Linux), "
             "or download from https://github.com/UB-Mannheim/tesseract/wiki (Windows)."
         )
+    except Exception:
+        return ""
 
-    # Strip leading/trailing whitespace and return
-    return raw_text.strip()
 
-
-def extract_text_with_confidence(image: np.ndarray) -> dict:
+def _run_tesseract_data_safe(pil_image: Image.Image, config: str) -> dict:
     """
-    Run Tesseract OCR on a preprocessed image and return the extracted
-    text along with word-level confidence scores.
-
-    This function uses pytesseract.image_to_data() which provides
-    detailed information about each recognized word, including its
-    confidence score (0-100).
+    Run pytesseract.image_to_data with error handling.
 
     Args:
-        image (np.ndarray): A preprocessed image as a NumPy array.
+        pil_image (PIL.Image): Input image.
+        config (str): Tesseract config string.
 
     Returns:
-        dict: A dictionary containing:
-            - "raw_text" (str): The full extracted text string
-            - "words" (list[dict]): List of word objects, each with:
-                - "text" (str): The recognized word
-                - "confidence" (float): Confidence score (0-100)
-            - "average_confidence" (float): Average confidence across
-              all recognized words (0-100)
-
-    Raises:
-        TypeError: If the input is not a valid NumPy array.
+        dict: OCR data dictionary with text, conf, etc.
     """
-
-    # Validate input type
-    if not isinstance(image, np.ndarray):
-        raise TypeError(
-            f"Expected a NumPy array, got {type(image).__name__}."
-        )
-
-    # Convert NumPy array to PIL Image
-    pil_image = Image.fromarray(image)
-
-    # Configure Tesseract
-    custom_config = r"--psm 6"
-
-    # Get detailed OCR data including confidence scores
-    # output_type=dict returns a dictionary with lists for each field
     try:
-        ocr_data = pytesseract.image_to_data(
+        return pytesseract.image_to_data(
             pil_image,
-            config=custom_config,
+            config=config,
             output_type=pytesseract.Output.DICT
         )
     except pytesseract.TesseractNotFoundError:
@@ -127,35 +91,138 @@ def extract_text_with_confidence(image: np.ndarray) -> dict:
             "sudo apt install tesseract-ocr (Linux), "
             "or download from https://github.com/UB-Mannheim/tesseract/wiki (Windows)."
         )
+    except Exception:
+        return {"text": [], "conf": []}
 
-    # Build list of words with their confidence scores
-    # Filter out empty text entries (Tesseract returns empty strings
-    # for block/paragraph/line boundaries)
+
+def _parse_confidence_data(ocr_data: dict) -> tuple:
+    """
+    Extract word-level confidence data from Tesseract output.
+
+    Args:
+        ocr_data (dict): Raw output from pytesseract.image_to_data().
+
+    Returns:
+        tuple: (words_list, average_confidence)
+            - words_list: list of {"text": str, "confidence": int}
+            - average_confidence: float (0-100)
+    """
     words = []
-    for i in range(len(ocr_data["text"])):
+    for i in range(len(ocr_data.get("text", []))):
         word_text = ocr_data["text"][i].strip()
         confidence = int(ocr_data["conf"][i])
 
-        # Skip empty entries and low-confidence noise (-1 means invalid)
+        # Skip empty entries and invalid confidence (-1)
         if word_text and confidence >= 0:
             words.append({
                 "text": word_text,
                 "confidence": confidence,
             })
 
-    # Calculate average confidence across all valid words
     if words:
-        avg_confidence = round(
-            sum(w["confidence"] for w in words) / len(words), 1
-        )
+        avg = round(sum(w["confidence"] for w in words) / len(words), 1)
     else:
-        avg_confidence = 0.0
+        avg = 0.0
 
-    # Also get the full raw text via image_to_string
-    raw_text = extract_text(image)
+    return words, avg
+
+
+def extract_text(image: np.ndarray) -> str:
+    """
+    Run Tesseract OCR on a preprocessed image using multi-pass
+    strategy and return the best extracted text.
+
+    Multi-pass strategy: tries multiple PSM modes (6, 4, 3) and
+    picks the result with the highest average word confidence.
+
+    Args:
+        image (np.ndarray): A preprocessed image as a NumPy array.
+
+    Returns:
+        str: The best raw text string extracted from the image.
+
+    Raises:
+        TypeError: If the input is not a valid NumPy array.
+    """
+    if not isinstance(image, np.ndarray):
+        raise TypeError(
+            f"Expected a NumPy array, got {type(image).__name__}."
+        )
+
+    pil_image = Image.fromarray(image)
+
+    best_text = ""
+    best_confidence = -1.0
+
+    # Try each PSM mode and pick the best result
+    for psm in PSM_MODES:
+        config = _build_config(psm)
+
+        # Get text and confidence data
+        ocr_data = _run_tesseract_data_safe(pil_image, config)
+        _, avg_conf = _parse_confidence_data(ocr_data)
+        text = _run_tesseract_safe(pil_image, config)
+
+        # Keep the result with the highest average confidence
+        if avg_conf > best_confidence and text:
+            best_confidence = avg_conf
+            best_text = text
+
+    return best_text
+
+
+def extract_text_with_confidence(image: np.ndarray) -> dict:
+    """
+    Run Tesseract OCR with multi-pass strategy and return the extracted
+    text along with word-level confidence scores.
+
+    Tries PSM modes 6, 4, and 3, picks the one with the highest
+    average confidence, and returns full word-level detail.
+
+    Args:
+        image (np.ndarray): A preprocessed image as a NumPy array.
+
+    Returns:
+        dict: A dictionary containing:
+            - "raw_text" (str): The full extracted text string
+            - "words" (list[dict]): List of word objects with confidence
+            - "average_confidence" (float): Average confidence (0-100)
+            - "psm_used" (int): Which PSM mode produced the best result
+
+    Raises:
+        TypeError: If the input is not a valid NumPy array.
+    """
+    if not isinstance(image, np.ndarray):
+        raise TypeError(
+            f"Expected a NumPy array, got {type(image).__name__}."
+        )
+
+    pil_image = Image.fromarray(image)
+
+    best_text = ""
+    best_words = []
+    best_confidence = -1.0
+    best_psm = PSM_MODES[0]
+
+    # Try each PSM mode and keep the best
+    for psm in PSM_MODES:
+        config = _build_config(psm)
+
+        # Get detailed confidence data for this PSM mode
+        ocr_data = _run_tesseract_data_safe(pil_image, config)
+        words, avg_conf = _parse_confidence_data(ocr_data)
+        text = _run_tesseract_safe(pil_image, config)
+
+        # Pick the mode with the highest average confidence
+        if avg_conf > best_confidence and text:
+            best_confidence = avg_conf
+            best_text = text
+            best_words = words
+            best_psm = psm
 
     return {
-        "raw_text": raw_text,
-        "words": words,
-        "average_confidence": avg_confidence,
+        "raw_text": best_text,
+        "words": best_words,
+        "average_confidence": best_confidence if best_confidence >= 0 else 0.0,
+        "psm_used": best_psm,
     }
