@@ -26,8 +26,8 @@ import sys
 # when running this script directly from the command line
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.preprocessor import preprocess_image
-from app.ocr import extract_text, extract_text_with_confidence
+from app.preprocessor import preprocess_dual
+from app.ocr import extract_best_from_dual
 from app.extractor import extract_fields
 from utils.file_handler import save_results
 
@@ -65,18 +65,21 @@ def run_pipeline(image_path: str, output_name: str = None) -> dict:
     print(f"📄 Processing: {image_path}")
     print("-" * 50)
 
-    # Step 1: Preprocess the image
-    print("🔧 Step 1: Preprocessing image...")
-    preprocessed = preprocess_image(image_path)
-    print("   ✅ Image preprocessed (grayscale → denoise → threshold)")
+    # Step 1: Preprocess the image with BOTH pipelines
+    print("🔧 Step 1: Preprocessing image (dual pipeline)...")
+    simple_img, enhanced_img = preprocess_dual(image_path)
+    print("   ✅ Simple pipeline: grayscale → denoise → Otsu")
+    print("   ✅ Enhanced pipeline: CLAHE → sharpen → adaptive threshold")
 
-    # Step 2: Extract text with confidence scores
-    print("🔍 Step 2: Running OCR...")
-    ocr_result = extract_text_with_confidence(preprocessed)
+    # Step 2: Run OCR on both, pick best by quality score
+    print("🔍 Step 2: Running OCR (comparing both pipelines)...")
+    ocr_result = extract_best_from_dual(simple_img, enhanced_img)
     raw_text = ocr_result["raw_text"]
     avg_confidence = ocr_result["average_confidence"]
+    pipeline_used = ocr_result.get("pipeline_used", "unknown")
     print(f"   ✅ Text extracted ({len(raw_text)} characters)")
     print(f"   📊 Average confidence: {avg_confidence}%")
+    print(f"   🏆 Best pipeline: {pipeline_used}")
 
     # Show the raw extracted text
     print("\n📝 Raw OCR Text:")

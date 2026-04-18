@@ -32,8 +32,8 @@ from fastapi.middleware.cors import CORSMiddleware
 # when running via uvicorn from the receipt-ocr directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.preprocessor import preprocess_image
-from app.ocr import extract_text, extract_text_with_confidence
+from app.preprocessor import preprocess_image, preprocess_dual
+from app.ocr import extract_text, extract_text_with_confidence, extract_best_from_dual
 from app.extractor import extract_fields
 from utils.file_handler import save_results, save_to_json, save_to_csv, save_to_excel
 
@@ -188,12 +188,12 @@ async def extract_receipt(file: UploadFile = File(...)):
         # Save uploaded file temporarily
         temp_path = _save_upload_temp(file)
 
-        # Run the full pipeline
-        # Step 1: Preprocess
-        preprocessed = preprocess_image(temp_path)
+        # Run the dual pipeline
+        # Step 1: Preprocess with BOTH pipelines
+        simple_img, enhanced_img = preprocess_dual(temp_path)
 
-        # Step 2: OCR with confidence
-        ocr_result = extract_text_with_confidence(preprocessed)
+        # Step 2: OCR on both, pick best result by quality score
+        ocr_result = extract_best_from_dual(simple_img, enhanced_img)
 
         # Step 3: Extract fields
         result = extract_fields(ocr_result["raw_text"])
@@ -255,9 +255,9 @@ async def extract_receipt_full(file: UploadFile = File(...)):
         # Save uploaded file temporarily
         temp_path = _save_upload_temp(file)
 
-        # Run the full pipeline
-        preprocessed = preprocess_image(temp_path)
-        ocr_result = extract_text_with_confidence(preprocessed)
+        # Run the dual pipeline
+        simple_img, enhanced_img = preprocess_dual(temp_path)
+        ocr_result = extract_best_from_dual(simple_img, enhanced_img)
         fields = extract_fields(ocr_result["raw_text"])
 
         # Save to all formats
@@ -270,6 +270,7 @@ async def extract_receipt_full(file: UploadFile = File(...)):
             "raw_text": ocr_result["raw_text"],
             "words": ocr_result["words"],
             "average_confidence": ocr_result["average_confidence"],
+            "pipeline_used": ocr_result.get("pipeline_used", "unknown"),
             "filename": output_name,
         }
 

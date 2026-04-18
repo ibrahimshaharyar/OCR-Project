@@ -1,226 +1,223 @@
 """
-preprocessor.py — Image Preprocessing Module (Enhanced)
+preprocessor.py — Image Preprocessing Module (Dual-Pipeline)
 
-This module provides an advanced image preprocessing pipeline
-for receipt/invoice images to maximize Tesseract OCR accuracy.
+This module provides TWO preprocessing pipelines and automatically
+picks the one that produces the best OCR result for each image:
 
-Processing pipeline:
-    1. Load and validate image
-    2. Resize/upscale to optimal DPI (~300 DPI equivalent)
-    3. Convert to grayscale
-    4. Apply CLAHE (adaptive contrast enhancement)
-    5. Apply sharpening (unsharp mask)
-    6. Apply denoising (bilateral filter — preserves edges better)
-    7. Apply adaptive thresholding (handles uneven lighting)
-    8. Apply morphological cleanup (close small gaps in text)
+Pipeline A (Simple — faithful to original):
+    1. Load image → Upscale → Grayscale
+    2. Light denoising (non-local means)
+    3. Otsu binary thresholding
+
+Pipeline B (Enhanced — aggressive cleanup):
+    1. Load image → Upscale → Grayscale
+    2. CLAHE contrast → Gentle sharpening
+    3. Bilateral denoising → Adaptive thresholding
+    4. Morphological closing
+
+The dual approach ensures that each receipt image gets whichever
+pipeline best preserves its text — simple receipts get Pipeline A,
+challenging ones (shadows, fading) get Pipeline B.
 
 Usage:
-    from app.preprocessor import preprocess_image
+    from app.preprocessor import preprocess_image, preprocess_dual
+    # Single best result:
     cleaned_image = preprocess_image("path/to/receipt.jpg")
+    # Both pipelines (for comparison in OCR module):
+    simple, enhanced = preprocess_dual("path/to/receipt.jpg")
 """
 
 import cv2
 import numpy as np
 
 
-def _resize_for_ocr(image: np.ndarray, target_height: int = 2000) -> np.ndarray:
-    """
-    Resize the image so its height is at least target_height pixels.
+# ============================================
+# Shared Helper Functions
+# ============================================
 
-    Tesseract performs best on images with ~300 DPI. Most receipt photos
-    from phones are too small. Upscaling improves character recognition
-    significantly.
+def _load_and_validate(image_path: str) -> np.ndarray:
+    """
+    Load an image from disk and validate it.
 
     Args:
-        image (np.ndarray): Input image (BGR or grayscale).
-        target_height (int): Minimum height in pixels. Default 2000px
-                             which approximates 300 DPI for most receipts.
+        image_path (str): Path to the image file.
 
     Returns:
-        np.ndarray: Resized image (only upscales, never downscales).
-    """
-    h, w = image.shape[:2]
-
-    # Only upscale — never shrink the image
-    if h >= target_height:
-        return image
-
-    # Calculate scale factor to reach target height
-    scale = target_height / h
-    new_w = int(w * scale)
-    new_h = int(h * scale)
-
-    # Use INTER_CUBIC for upscaling — best quality for text
-    resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-    return resized
-
-
-def _apply_clahe(gray: np.ndarray) -> np.ndarray:
-    """
-    Apply CLAHE (Contrast Limited Adaptive Histogram Equalization).
-
-    CLAHE improves contrast locally rather than globally, which is
-    critical for receipts with uneven lighting (e.g., shadows, folds,
-    or faded thermal print areas).
-
-    Args:
-        gray (np.ndarray): Grayscale image.
-
-    Returns:
-        np.ndarray: Contrast-enhanced grayscale image.
-    """
-    clahe = cv2.createCLAHE(
-        clipLimit=2.0,        # Limits contrast amplification (prevents noise boost)
-        tileGridSize=(8, 8)   # Divides image into 8x8 tiles for local processing
-    )
-    return clahe.apply(gray)
-
-
-def _sharpen(image: np.ndarray) -> np.ndarray:
-    """
-    Apply unsharp masking to sharpen text edges.
-
-    Sharpening makes character boundaries crisper, which directly
-    improves Tesseract's ability to distinguish similar characters
-    (e.g., 'l' vs '1', 'O' vs '0').
-
-    Technique: subtract a Gaussian-blurred version from the original
-    and add the difference back with a weight.
-
-    Args:
-        image (np.ndarray): Grayscale image.
-
-    Returns:
-        np.ndarray: Sharpened image.
-    """
-    # Create a blurred copy
-    blurred = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
-
-    # Unsharp mask: original + weight * (original - blurred)
-    # alpha=1.5: how much of the original to keep
-    # beta=-0.5: how much of the blur to subtract
-    # gamma=0: brightness offset
-    sharpened = cv2.addWeighted(image, 1.5, blurred, -0.5, 0)
-
-    return sharpened
-
-
-def _adaptive_threshold(image: np.ndarray) -> np.ndarray:
-    """
-    Apply adaptive thresholding instead of global Otsu.
-
-    Adaptive thresholding calculates a threshold for each small region
-    of the image, making it far more robust for:
-    - Thermal receipts with fading
-    - Photos with shadows or uneven lighting
-    - Creased or curved receipts
-
-    Args:
-        image (np.ndarray): Denoised grayscale image.
-
-    Returns:
-        np.ndarray: Binary (black & white) image.
-    """
-    binary = cv2.adaptiveThreshold(
-        image,
-        255,                                  # Max value (white)
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,       # Gaussian-weighted neighbourhood
-        cv2.THRESH_BINARY,                    # Output is binary
-        21,                                   # Block size (neighbourhood size)
-        10                                    # Constant subtracted from mean
-    )
-    return binary
-
-
-def _morphological_cleanup(binary: np.ndarray) -> np.ndarray:
-    """
-    Apply morphological operations to clean up the binary image.
-
-    - Closing: fills small holes/gaps inside characters (broken 'e', 'a')
-    - This helps Tesseract recognize characters that got fragmented
-      during thresholding.
-
-    Args:
-        binary (np.ndarray): Binary (B&W) image.
-
-    Returns:
-        np.ndarray: Cleaned binary image.
-    """
-    # Small rectangular kernel — just enough to close 1-2 pixel gaps
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-
-    # Closing = dilation → erosion (fills small gaps without growing text)
-    cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
-
-    return cleaned
-
-
-def preprocess_image(image_path: str) -> np.ndarray:
-    """
-    Load an image from disk and apply the full enhanced preprocessing
-    pipeline to maximize OCR accuracy.
-
-    Pipeline:
-        1. Read image from disk
-        2. Upscale to ~300 DPI equivalent (if smaller)
-        3. Convert BGR → Grayscale
-        4. CLAHE adaptive contrast enhancement
-        5. Unsharp mask sharpening
-        6. Bilateral denoising (preserves edges, removes noise)
-        7. Adaptive thresholding (handles uneven lighting)
-        8. Morphological closing (fills broken characters)
-
-    Args:
-        image_path (str): Absolute or relative path to the image file.
-
-    Returns:
-        np.ndarray: A preprocessed binary (black & white) image as a
-                     NumPy array, ready for OCR processing.
+        np.ndarray: The loaded BGR image.
 
     Raises:
-        FileNotFoundError: If the image file does not exist at the given path.
+        FileNotFoundError: If the image doesn't exist or can't be read.
     """
-
-    # Step 1: Read the image from disk
     image = cv2.imread(image_path)
-
     if image is None:
         raise FileNotFoundError(
             f"Image not found or cannot be read: '{image_path}'. "
             "Please check the file path and ensure the file is a valid image."
         )
+    return image
 
-    # Step 2: Upscale small images for better OCR
-    # Tesseract works best at ~300 DPI; most phone photos are lower
-    image = _resize_for_ocr(image, target_height=2000)
 
-    # Step 3: Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+def _resize_for_ocr(image: np.ndarray, target_height: int = 2000) -> np.ndarray:
+    """
+    Upscale small images to improve OCR accuracy.
+    Tesseract works best at ~300 DPI. Only upscales, never shrinks.
 
-    # Step 4: CLAHE — adaptive contrast enhancement
-    # Fixes faded thermal receipts and uneven lighting
-    enhanced = _apply_clahe(gray)
+    Args:
+        image (np.ndarray): Input image.
+        target_height (int): Minimum height in pixels.
 
-    # Step 5: Sharpen text edges
-    # Makes character boundaries crisper for Tesseract
-    sharpened = _sharpen(enhanced)
+    Returns:
+        np.ndarray: Resized image.
+    """
+    h, w = image.shape[:2]
+    if h >= target_height:
+        return image
 
-    # Step 6: Bilateral filter denoising
-    # Unlike fastNlMeansDenoising, bilateral filter preserves edges
-    # while smoothing noise — critical for text preservation
-    denoised = cv2.bilateralFilter(
-        sharpened,
-        d=9,              # Diameter of pixel neighbourhood
-        sigmaColor=75,    # Filter sigma in the color space
-        sigmaSpace=75     # Filter sigma in the coordinate space
+    scale = target_height / h
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+
+
+# ============================================
+# Pipeline A: Simple (faithful to original text)
+# ============================================
+
+def _preprocess_simple(gray: np.ndarray) -> np.ndarray:
+    """
+    Simple preprocessing pipeline — minimal processing to preserve
+    the original text as faithfully as possible.
+
+    Steps:
+        1. Non-local means denoising (gentle)
+        2. Otsu binary thresholding (global)
+
+    This works best for:
+        - Clean, well-lit receipt photos
+        - Printed text on white backgrounds
+        - High-resolution images
+
+    Args:
+        gray (np.ndarray): Grayscale image.
+
+    Returns:
+        np.ndarray: Binary image.
+    """
+    # Gentle denoising — preserves text detail
+    denoised = cv2.fastNlMeansDenoising(
+        gray,
+        h=10,
+        templateWindowSize=7,
+        searchWindowSize=21
     )
 
-    # Step 7: Adaptive thresholding
-    # Handles uneven lighting far better than global Otsu
-    binary = _adaptive_threshold(denoised)
+    # Global Otsu thresholding — simple but faithful
+    _, binary = cv2.threshold(
+        denoised, 0, 255,
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
 
-    # Step 8: Morphological cleanup
-    # Close small gaps in characters from thresholding
-    cleaned = _morphological_cleanup(binary)
+    return binary
+
+
+# ============================================
+# Pipeline B: Enhanced (handles difficult images)
+# ============================================
+
+def _preprocess_enhanced(gray: np.ndarray) -> np.ndarray:
+    """
+    Enhanced preprocessing pipeline — more aggressive processing
+    to handle challenging receipt images.
+
+    Steps:
+        1. CLAHE contrast enhancement (gentle clipLimit)
+        2. Light sharpening (reduced weight to avoid artifacts)
+        3. Bilateral denoising (edge-preserving)
+        4. Adaptive thresholding (handles uneven lighting)
+        5. Morphological closing (fixes broken characters)
+
+    This works best for:
+        - Faded thermal receipts
+        - Photos with shadows/uneven lighting
+        - Low-contrast images
+
+    Args:
+        gray (np.ndarray): Grayscale image.
+
+    Returns:
+        np.ndarray: Binary image.
+    """
+    # CLAHE — gentle contrast boost (lower clipLimit to avoid noise amp)
+    clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+
+    # Light sharpening — reduced weight to prevent halo artifacts
+    blurred = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=2)
+    sharpened = cv2.addWeighted(enhanced, 1.3, blurred, -0.3, 0)
+
+    # Bilateral denoising — preserves edges while removing noise
+    denoised = cv2.bilateralFilter(
+        sharpened, d=9, sigmaColor=50, sigmaSpace=50
+    )
+
+    # Adaptive thresholding — local thresholds for uneven lighting
+    binary = cv2.adaptiveThreshold(
+        denoised, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        21, 10
+    )
+
+    # Morphological closing — fill tiny gaps in broken characters
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
 
     return cleaned
+
+
+# ============================================
+# Public API
+# ============================================
+
+def preprocess_dual(image_path: str) -> tuple:
+    """
+    Load an image and run BOTH preprocessing pipelines.
+
+    Returns both results so the OCR module can compare them
+    and pick the one with better actual text quality.
+
+    Args:
+        image_path (str): Path to the image file.
+
+    Returns:
+        tuple: (simple_result, enhanced_result) — both np.ndarray
+    """
+    image = _load_and_validate(image_path)
+    image = _resize_for_ocr(image, target_height=2000)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    simple = _preprocess_simple(gray)
+    enhanced = _preprocess_enhanced(gray)
+
+    return simple, enhanced
+
+
+def preprocess_image(image_path: str) -> np.ndarray:
+    """
+    Load an image and apply the simple preprocessing pipeline.
+
+    This function is kept for backward compatibility with run.py
+    and any code that expects a single image result. The OCR module
+    now uses preprocess_dual() for the dual-pipeline strategy.
+
+    Args:
+        image_path (str): Path to the image file.
+
+    Returns:
+        np.ndarray: Preprocessed binary image.
+    """
+    image = _load_and_validate(image_path)
+    image = _resize_for_ocr(image, target_height=2000)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    return _preprocess_simple(gray)
